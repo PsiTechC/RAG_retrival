@@ -1,0 +1,138 @@
+trigger:
+  branches:
+    include: [ main ]
+
+variables:
+  azureSubscription: 'Azure-Detego-Connection-Test1'
+  rgName: 'dto-ai-np-rg-001'
+  acrName: 'dgContainerRegistryNonProd'
+  kvName: 'dto-ai-pr-keyvault-002'
+  caeName: 'dto-ai-np-container-app-env-001'
+  caName:  'dev-detego-devops-test1'                # (rename here if you want the “-backend” suffix)
+  imageRepo: 'dev-detego-devops-test1-backend'
+  imageTag:  '$(Build.BuildId)'
+
+stages:
+- stage: BuildAndPush
+  displayName: Build and Push Docker image
+  jobs:
+  - job: docker
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: AzureCLI@2
+      displayName: Login to Azure & ACR
+      inputs:
+        azureSubscription: $(azureSubscription)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          set -euo pipefail
+          az acr login --name $(acrName)
+          docker login $(acrName).azurecr.io \
+            -u "$(az acr credential show --name $(acrName) --query username -o tsv)" \
+            -p "$(az acr credential show --name $(acrName) --query passwords[0].value -o tsv)"
+
+    - task: Bash@3
+      displayName: Docker build
+      inputs:
+        targetType: inline
+        script: |
+          set -euo pipefail
+          docker build -t $(acrName).azurecr.io/$(imageRepo):$(imageTag) .
+
+    - task: Bash@3
+      displayName: Docker push
+      inputs:
+        targetType: inline
+        script: |
+          set -euo pipefail
+          docker push $(acrName).azurecr.io/$(imageRepo):$(imageTag)
+
+- stage: Deploy
+  displayName: Deploy Container App with Key Vault Secrets
+  dependsOn: BuildAndPush
+  jobs:
+  - job: deploy
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: AzureCLI@2
+      displayName: Deploy using Bicep template
+      inputs:
+        azureSubscription: $(azureSubscription)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          set -euo pipefail
+
+          # Discover environment’s region (exactly what the Portal does implicitly)
+          envLoc="$(az resource show \
+            --resource-group $(rgName) \
+            --resource-type Microsoft.App/managedEnvironments \
+            --name "$(caeName)" \
+            --query location -o tsv || true)"
+
+          if [ -z "${envLoc}" ]; then
+            echo "Managed Environment '$(caeName)' not found in RG '$(rgName)'."
+            exit 1
+          fi
+          echo "ℹ️  Container Apps Environment location = ${envLoc}"
+
+          # Create parameter file (no syntax errors, pure JSON)
+          cat > /tmp/params.json << 'JSON'
+          {
+            "parameters": {
+              "location":   { "value": "" },   
+              "caeName":    { "value": "$(caeName)" },
+              "caName":     { "value": "$(caName)" },
+              "acrName":    { "value": "$(acrName)" },
+              "kvName":     { "value": "$(kvName)" },
+              "imageRepo":  { "value": "$(imageRepo)" },
+              "imageTag":   { "value": "$(imageTag)" },
+
+              "cpu":        { "value": 2 },
+              "memory":     { "value": "4Gi" },
+              "minReplicas":{ "value": 1 },
+              "maxReplicas":{ "value": 10 },
+
+              "secretMappings": {
+                "value": [
+                  { "kvSecretName": "sa-port-np",                           "secretName": "dev-port-np",                           "envName": "PORT" },
+                  { "kvSecretName": "sa-sql-server-np",                     "secretName": "dev-sql-server-np",                     "envName": "SQL_SERVER" },
+                  { "kvSecretName": "sa-sql-db-np",                         "secretName": "dev-sql-db-np",                         "envName": "SQL_DATABASE" },
+                  { "kvSecretName": "sa-sql-user-np",                       "secretName": "dev-sql-user-np",                       "envName": "SQL_USER" },
+                  { "kvSecretName": "sa-admin-np",                          "secretName": "dev-admin-np",                          "envName": "SQL_PASSWORD" },
+                  { "kvSecretName": "sa-sql-port-np",                       "secretName": "dev-sql-port-np",                       "envName": "SQL_PORT" },
+                  { "kvSecretName": "sa-azure-openai-endpoint-np",          "secretName": "dev-azure-openai-endpoint-np",          "envName": "AZURE_OPENAI_ENDPOINT" },
+                  { "kvSecretName": "sa-azure-openai-key-np",               "secretName": "dev-azure-openai-key-np",               "envName": "AZURE_OPENAI_KEY" },
+                  { "kvSecretName": "sa-azure-openai-chat-deployment-np",   "secretName": "dev-azure-openai-chat-deployment-np",   "envName": "AZURE_OPENAI_CHAT_DEPLOYMENT" },
+                  { "kvSecretName": "sa-azure-openai-chat-api-version-np",  "secretName": "dev-azure-openai-chat-api-version-np",  "envName": "AZURE_OPENAI_CHAT_API_VERSION" },
+                  { "kvSecretName": "sa-azure-openai-embedd-deployment-np", "secretName": "dev-azure-openai-embedd-deployment-np", "envName": "AZURE_OPENAI_EMBEDDING_DEPLOYMENT" },
+                  { "kvSecretName": "sa-azure-openai-embedd-api-vserion-np","secretName": "dev-azure-openai-embedd-api-vserion-np","envName": "AZURE_OPENAI_EMBEDDING_API_VERSION" }
+                ]
+              }
+            }
+          }
+          JSON
+
+          # Inject the environment location into params.json
+          # (Avoids the BCP035 warning and guarantees region = env’s region)
+          tmp="$(mktemp)"; jq --arg loc "${envLoc}" '.parameters.location.value = $loc' /tmp/params.json > "$tmp" && mv "$tmp" /tmp/params.json
+
+          echo "---- /tmp/params.json (sanitized) ----"
+          sed 's/"value": "@Microsoft.KeyVault[^"]*"/"value": "@Microsoft.KeyVault(...redacted...)"/g' /tmp/params.json
+
+          # Pre-compile & validate without producing JSON output to the task log
+          az bicep build --file infra/main.bicep -o none
+          az deployment group validate \
+            --resource-group $(rgName) \
+            --template-file infra/main.bicep \
+            --parameters @/tmp/params.json \
+            -o none
+
+          # Create (keep output; but the earlier steps no longer “consume” the stream)
+          az deployment group create \
+            --resource-group $(rgName) \
+            --template-file infra/main.bicep \
+            --parameters @/tmp/params.json

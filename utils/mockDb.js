@@ -399,7 +399,7 @@
 // };
 
 
-
+// 
 require('dotenv').config();
 const mongoose = require('mongoose');
 const { parse, isValid, format } = require('date-fns');
@@ -491,14 +491,76 @@ function normalizeMemberId(memberId) {
 
 
 // ✅ Normalize name by collapsing multiple spaces
+// function normalizeName(name) {
+//   return name.replace(/\s+/g, ' ').trim();
+// }
+
+
 function normalizeName(name) {
+  if (!name || typeof name !== 'string') return null;
   return name.replace(/\s+/g, ' ').trim();
 }
 
-// ✅ Find customer using name, dob, and memberId
-async function findCustomer(name, dob, member_id) {
-  if (!name || !dob || !member_id) return null;
 
+// ✅ Find customer using name, dob, and memberId
+// async function findCustomer(name, dob, member_id) {
+//   if (!name || !dob || !member_id) return null;
+
+//   const normalizedDob = normalizeDOB(dob);
+//   const normalizedMemberId = normalizeMemberId(member_id);
+//   const normalizedName = normalizeName(name);
+
+//   if (!normalizedDob || !normalizedMemberId) {
+//     console.error('❌ Normalization failed:', { dob, member_id });
+//     return null;
+//   }
+
+//   console.log('🔍 Normalized Name:', normalizedName);
+//   console.log('🔍 Normalized DOB:', normalizedDob);
+//   console.log('🔍 Normalized Member ID:', normalizedMemberId);
+
+//   return await Customer.findOne({
+//     name: new RegExp(`^${normalizedName}$`, 'i'),
+//     dob: normalizedDob,
+//     memberId: normalizedMemberId
+//   });
+// }
+
+// async function findCustomer(name, dob, member_id) {
+//   const normalizedDob = normalizeDOB(dob);
+//   const normalizedMemberId = normalizeMemberId(member_id);
+//   const normalizedName = normalizeName(name);
+// if (!normalizedName) {
+//   console.error('❌ Name normalization failed:', name);
+//   return null;
+// }
+
+
+//   if (!normalizedDob || !normalizedMemberId) {
+//     console.error('❌ Normalization failed:', { dob, member_id });
+//     return null;
+//   }
+
+//   console.log('🔍 Normalized Name:', normalizedName);
+//   console.log('🔍 Normalized DOB:', normalizedDob);
+//   console.log('🔍 Normalized Member ID:', normalizedMemberId);
+
+//   const query = {
+//     name: new RegExp(`^${normalizedName}$`, 'i'),
+//     dob: normalizedDob,
+//     memberId: normalizedMemberId
+//   };
+
+//   console.log("🧪 Final Query:", JSON.stringify(query, null, 2));
+
+//   const result = await Customer.findOne(query);
+//   console.log("🔍 Mongo Result:", result);
+
+//   return result;
+// }
+
+
+async function findCustomer(name, dob, member_id) {
   const normalizedDob = normalizeDOB(dob);
   const normalizedMemberId = normalizeMemberId(member_id);
   const normalizedName = normalizeName(name);
@@ -512,12 +574,16 @@ async function findCustomer(name, dob, member_id) {
   console.log('🔍 Normalized DOB:', normalizedDob);
   console.log('🔍 Normalized Member ID:', normalizedMemberId);
 
-  return await Customer.findOne({
+  const result = await Customer.findOne({
     name: new RegExp(`^${normalizedName}$`, 'i'),
     dob: normalizedDob,
     memberId: normalizedMemberId
   });
+
+  console.log("🔍 Mongo Result:", result);
+  return result;
 }
+
 
 // ✅ Find plan using memberId
 async function findPlanById(member_id) {
@@ -568,3 +634,8 @@ module.exports = {
   normalizeMemberId,
   normalizeDOB
 };
+
+
+
+
+// C:\sanket\RAG_reteival\utils\mockDb.js
