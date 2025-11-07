@@ -99,6 +99,7 @@ stages:
               "secretMappings": {
                 "value": [
                   { "kvSecretName": "sa-port-np",                           "secretName": "dev-port-np",                           "envName": "PORT" },
+                  { "kvSecretName": "sa-mongo-db-np",                       "secretName": "dev-mongo-db-np",                       "envName": "MONGODB_URI" },
                   { "kvSecretName": "sa-sql-server-np",                     "secretName": "dev-sql-server-np",                     "envName": "SQL_SERVER" },
                   { "kvSecretName": "sa-sql-db-np",                         "secretName": "dev-sql-db-np",                         "envName": "SQL_DATABASE" },
                   { "kvSecretName": "sa-sql-user-np",                       "secretName": "dev-sql-user-np",                       "envName": "SQL_USER" },
